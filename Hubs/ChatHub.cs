@@ -9,6 +9,8 @@ namespace SignalRService.Hubs
     {
         private ChatServiceValidation ChatServiceValidation { get; set; }
         private ChatService ChatService { get; set; }
+        public ChatHttpRequest HttpRequest { get; }
+
         private readonly IHubContext<ChatHub> _hubContext;
         private static readonly Dictionary<string, Client> ServiceClients = new();
 
@@ -19,17 +21,76 @@ namespace SignalRService.Hubs
         public ChatHub(IHubContext<ChatHub> hubContext)
         {
             _hubContext = hubContext;
-            ChatServiceValidation = new ChatServiceValidation(ServiceClients,Context);
+            ChatServiceValidation = new ChatServiceValidation(Context);
             ChatService = new ChatService(ServiceClients, Context, Clients);
+            HttpRequest = new ChatHttpRequest(Context);
+            
         }
 
         #region NEGOTIATE
 
+        public override async Task OnDisconnectedAsync(Exception exception)
+        {
+            try
+            {
+                if (!ChatServiceValidation.IsValid()) { 
+                    throw new Exception("Unable to validate requests");
+                }
+                
+                await Offline();
+
+                await this.Disconnect(Context.ConnectionId);
+
+                await base.OnDisconnectedAsync(exception);
+            }
+            catch (System.Exception ex)
+            {
+                throw;
+            }
+        }
+
+        public override async Task OnConnectedAsync()
+        {
+            try
+            {
+                if (!ChatServiceValidation.IsValid()) { 
+                    throw new Exception("Unable to validate requests");
+                }
+
+                var clientGuid = HttpRequest.GetClientGuid();
+
+                if (string.IsNullOrEmpty(clientGuid)){
+                    throw new Exception("Unknown Client Guid");
+                }
+
+                ChatService.AddClient(clientGuid);
+
+                await base.OnConnectedAsync();
+            }
+            catch (System.Exception ex)
+            {
+                throw;
+            }
+        }
+
+        #endregion
+
+        #region "PUBLIC METHODS"
+
+        /// <summary>
+        /// Disconnect client from the service.
+        /// </summary>
+        /// <param name="connectionId">Client unique identifier</param>
         private async Task Disconnect(string connectionId)
         {
             try
             {
-                Entities.Client client = ChatServiceValidation.ValidateRequest() ?? throw new Exception("Client not found");
+                if (!ChatServiceValidation.IsValid()) { 
+                    throw new Exception("Unable to validate requests");
+                }
+
+                Client? client = ChatService.GetClient() ?? throw new Exception("Client request not exists");
+
                 await ClientClean(client, connectionId);
             }
             catch (System.Exception ex)
@@ -39,62 +100,19 @@ namespace SignalRService.Hubs
             }
         }
 
-        public override async Task OnDisconnectedAsync(Exception exception)
-        {
-            try
-            {
-                Entities.Client client = ChatServiceValidation.ValidateRequest() ?? throw new Exception("Client not found");
-
-                await Offline();
-
-                await this.Disconnect(Context.ConnectionId);
-
-                await base.OnDisconnectedAsync(exception);
-            }
-            catch (System.Exception ex)
-            {
-                Console.WriteLine(string.Format("ERROR OnDisconnectedAsync: {0} ", ex.Message));
-                throw;
-            }
-        }
-
-        public override async Task OnConnectedAsync()
-        {
-            try
-            {
-                ChatServiceValidation.ValidateRequest(true);
-
-                var clientGuid = ChatServiceValidation.GetClientGuid();
-
-                if (!string.IsNullOrEmpty(clientGuid))
-                {
-                    ChatService.AddClient(clientGuid);
-                }
-                else
-                {
-                    throw new Exception("Unknown Client Guid");
-                }
-
-                await base.OnConnectedAsync();
-            }
-            catch (System.Exception ex)
-            {
-                Console.WriteLine(string.Format("ERROR OnConnectedAsync: {0} ", ex.Message));
-                throw;
-            }
-        }
-
-        #endregion
-
-        #region PUBLIC METHODS
-
+        /// <summary>
+        /// Hub method to create a group chat.
+        /// </summary>
+        /// <param name="groupGuid">Group unique identifier</param>
         public async Task AddToGroup(string groupGuid)
         {
             try
             {
-                groupGuid = groupGuid.ToUpper();
+                if (!ChatServiceValidation.IsValid()) { 
+                    throw new Exception("Unable to validate requests");
+                }
 
-                ChatServiceValidation.ValidateRequest();
+                groupGuid = groupGuid.ToUpper();
 
                 await Groups.AddToGroupAsync(Context.ConnectionId, groupGuid);
 
@@ -107,23 +125,29 @@ namespace SignalRService.Hubs
             }
         }
 
+        /// <summary>
+        /// Hub method to add user to the service if not alredy exists.
+        /// </summary>
+        /// <param name="userGuid">User unique identifier</param>
         public async Task<string> AddUser(string userGuid)
         {
             try
             {
+                if (!ChatServiceValidation.IsValid()) { 
+                    throw new Exception("Unable to validate requests");
+                }
+
                 userGuid = userGuid.ToUpper();
 
-                Entities.Client client = ChatServiceValidation.ValidateRequest();
+                Client? client = ChatService.GetClient() ?? throw new Exception("Client request not exists");
 
-                Entities.User item = client.Users.Where(x => x.Id.Equals(userGuid)).FirstOrDefault();
+                User? item = client.Users.FirstOrDefault(x => x.Id.Equals(userGuid));
 
                 if (item == null)
                 {
                     client.AddUser(
                         new Entities.User() { ConnectionId = Context.ConnectionId, Id = userGuid }
                     );
-
-                    Console.WriteLine($"User {userGuid} - {Context.ConnectionId} created");
                 }
                 else
                 {
@@ -148,7 +172,7 @@ namespace SignalRService.Hubs
                     await OnDisconnectedAsync(ex);
                 }
 
-                Console.WriteLine(string.Format("ERROR AddUser: {0} ", ex.Message));
+                // Console.WriteLine(string.Format("ERROR AddUser: {0} ", ex.Message));
                 throw;
             }
         }
@@ -163,7 +187,7 @@ namespace SignalRService.Hubs
         {
             try
             {
-                Entities.User u = client.GetUser(connectionId, true);
+                User u = client.GetUser(connectionId, true);
 
                 if (u != null)
                 {
@@ -185,9 +209,8 @@ namespace SignalRService.Hubs
                     ServiceClients.Remove(client.Id);
                 }
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                Console.WriteLine(string.Format("ERROR ClientClean: {0} ", ex.Message));
                 throw;
             }
         }
@@ -204,36 +227,33 @@ namespace SignalRService.Hubs
             {
                 await Clients.All.SendAsync("ReceiveAll", message);
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                Console.WriteLine(string.Format("ERROR SendAll: {0} ", ex.Message));
                 throw;
             }
         }
 
         /// <summary>
-        /// Send a private messaje to Client using the destination ConnectionID
+        /// Send a private messaje to another Client
         /// </summary>
         /// <param name="fromUserGuid">User Guid thats sends the message</param>
         /// <param name="toUserGuid">User Guid that will be receive the message</param>
         /// <param name="message">Message sended as string</param>
         /// <returns>Http ClientProxy response</returns>
-        public async Task SendPrivateMessage(
-            string fromUserGuid,
-            string toUserGuid,
-            string message,
-            string messageGuid
-        )
-        {
+        public async Task SendPrivateMessage( string fromUserGuid, string toUserGuid, string message, string messageGuid) {
             try
             {
+
+                if (!ChatServiceValidation.IsValid()) { 
+                    throw new Exception("Unable to validate requests");
+                }
+
                 fromUserGuid = fromUserGuid.ToUpper();
                 toUserGuid = toUserGuid.ToUpper();
                 messageGuid = messageGuid.ToUpper();
-
-                Client client = ChatServiceValidation.ValidateRequest() ?? throw new Exception("Client not found");
-
-                Entities.User user = client.GetUser(toUserGuid, false) ?? throw new Exception($"User with GUID {toUserGuid} not exists");
+                
+                Client? client = ChatService.GetClient() ?? throw new Exception("Client request not exists");
+                User user = client.GetUser(toUserGuid, false) ?? throw new Exception($"User with GUID {toUserGuid} not exists");
 
                 await Clients
                     .Client(user.ConnectionId)
@@ -245,56 +265,47 @@ namespace SignalRService.Hubs
                         DateTime.UtcNow.ToString("o")
                     );
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                Console.WriteLine(string.Format("ERROR SendPrivateMessage: {0} ", ex.Message));
                 throw;
             }
         }
 
         /// <summary>
-        /// Indicates if one messages was deleted from chat interface by user.
+        /// Delete client message.
         /// </summary>
         /// <param name="messageGuid">Message unique identifier</param>
         /// <param name="sourceGuid">Represents the Group or destination User unique identifier</param>
         /// <param name="fromGroup">Indicates if the messages comes from chat Group</param>
         /// <returns></returns>
-        public async Task DeleteMessage(
-            string messageGuid,
-            string? sourceGuid,
-            bool fromGroup = false
-        )
-        {
+        public async Task DeleteMessage( string messageGuid, string sourceGuid = "", bool fromGroup = false) {
             try
             {
-                Client client = ChatServiceValidation.ValidateRequest() ?? throw new Exception("Client not found");;
-
-                messageGuid = messageGuid.ToUpper();
-
+                if (!ChatServiceValidation.IsValid()) { 
+                    throw new Exception("Unable to validate requests");
+                }
+                
                 if (fromGroup && !Guid.TryParse(sourceGuid, out Guid groupGuid))
                 {
-                    throw new Exception("Group identifier not valid");
+                    throw new Exception("Invalid Group identifier");
                 }
 
+                messageGuid = messageGuid.ToUpper();
                 sourceGuid = sourceGuid.ToUpper();
+
+                Client? client = ChatService.GetClient() ?? throw new Exception("Client request not exists");
 
                 if (fromGroup)
                 {
-                    Group g = client.Groups.FirstOrDefault(w => w.Id.Equals(sourceGuid.ToUpper()));
+                    Group? group = client.Groups.FirstOrDefault(w => w.Id.Equals(sourceGuid.ToUpper()));
                         
-                    if (object.Equals(g, null))
+                    if (object.Equals(group, null))
                     {
                         throw new Exception("Group not exists");
                     }
 
-                    foreach (User user in g.Members)
+                    foreach (User user in group.Members.Where(member => !member.ConnectionId.Equals(Context.ConnectionId)))
                     {
-                        if (user.ConnectionId.Equals(Context.ConnectionId))
-                        {
-                            // Do nothing if is the same user.
-                            continue;
-                        }
-
                         await Clients
                             .Client(user.ConnectionId)
                             .SendAsync("DeleteMessage", messageGuid, sourceGuid, fromGroup);
@@ -302,19 +313,13 @@ namespace SignalRService.Hubs
                 }
                 else
                 {
-                    User u = client.Users.FirstOrDefault(w => w.Id.Equals(sourceGuid));
+                    User? user = client.Users.Where(u => !u.ConnectionId.Equals(Context.ConnectionId)).FirstOrDefault(w => w.Id.Equals(sourceGuid));
 
-                    if (
-                        object.Equals(u, null)
-                        || (!object.Equals(u, null)) && u.ConnectionId.Equals(Context.ConnectionId)
-                    )
-                    {
-                        // Do nothing if is the same user.
-                        return;
-                    }
+                    // it is possible that the user does not exist if it logged out
+                    if (object.Equals(user, null)) { return; }
 
                     await Clients
-                        .Client(u.ConnectionId)
+                        .Client(user.ConnectionId)
                         .SendAsync("DeleteMessage", messageGuid, sourceGuid, fromGroup);
                 }
             }
@@ -324,37 +329,27 @@ namespace SignalRService.Hubs
             }
         }
 
-        // public async Task<string> Diagnostic()
-        // {
-        //     ChatServiceValidation.ValidateRequest();
-
-        //     string text = string.Empty;
-
-        //     string jsonString = JsonConvert.SerializeObject(ServiceClients);
-
-        //     return jsonString;
-        // }
-
+        /// <summary>
+        /// Indicates to all connected users, that the user it's Online.
+        /// </summary>
         public async Task Online()
         {
             try
             {
-                Client client = ChatServiceValidation.ValidateRequest() ?? throw new Exception("Client not found");;
+                if (!ChatServiceValidation.IsValid()) { 
+                    throw new Exception("Unable to validate requests");
+                }
+
+                Client? client = ChatService.GetClient() ?? throw new Exception("Client request not exists");
 
                 User logged = client.GetUser(Context.ConnectionId, true);
 
                 List<User> users = client.GetUserDistinctFromGroup();
 
                 foreach (
-                    string userConnectionId in users.Select(u => u.ConnectionId).Distinct().ToList()
+                    string userConnectionId in users.Where(u => !u.ConnectionId.Equals(Context.ConnectionId)).Select(u => u.ConnectionId).Distinct().ToList()
                 )
                 {
-                    if (userConnectionId.Equals(Context.ConnectionId))
-                    {
-                        // Do nothing if is the same user.
-                        continue;
-                    }
-
                     try
                     {
                         User toUser = client.GetUser(userConnectionId, true);
@@ -375,26 +370,26 @@ namespace SignalRService.Hubs
             }
         }
 
-        public async Task Offline()
-        {
+        /// <summary>
+        /// Indicates to all connected users, that the user it's Offline.
+        /// </summary>
+        public async Task Offline() {
             try
             {
-                Client client = ChatServiceValidation.ValidateRequest() ?? throw new Exception("Client not found");;
+                if (!ChatServiceValidation.IsValid()) { 
+                    throw new Exception("Unable to validate requests");
+                }
+
+                Client? client = ChatService.GetClient() ?? throw new Exception("Client request not exists");
 
                 User logged = client.GetUser(Context.ConnectionId, true);
 
                 List<User> users = client.GetUserDistinctFromGroup();
 
                 foreach (
-                    string userConnectionId in users.Select(u => u.ConnectionId).Distinct().ToList()
+                    string userConnectionId in users.Where(u => !u.ConnectionId.Equals(Context.ConnectionId)).Select(u => u.ConnectionId).Distinct().ToList()
                 )
                 {
-                    if (userConnectionId.Equals(Context.ConnectionId))
-                    {
-                        // Do nothing if is the same user.
-                        continue;
-                    }
-
                     try
                     {
                         User toUser = client.GetUser(userConnectionId, true);
@@ -416,19 +411,14 @@ namespace SignalRService.Hubs
         }
 
         /// <summary>
-        /// Sends a message to group.
+        /// Sends a message to a group.
         /// </summary>
         /// <param name="user">User that sends the message. Currently used as Guid</param>
         /// <param name="message">User message as string</param>
         /// <param name="groupName">Destination Group name. Currently used as Guid</param>
         /// <returns>Http ClientProxy response</returns>
         /// <exception cref="Exception"></exception>
-        public async Task SendGroupMessage(
-            string fromUserGuid,
-            string toGroupGuid,
-            string message,
-            string messageGuid
-        )
+        public async Task SendGroupMessage(string fromUserGuid, string toGroupGuid, string message, string messageGuid)
         {
             try
             {
@@ -449,11 +439,12 @@ namespace SignalRService.Hubs
             }
             catch (System.Exception ex)
             {
-                Console.WriteLine(string.Format("ERROR SendMessage: {0} ", ex.Message));
                 throw;
             }
         }
-    }
+    
 
-    #endregion
+        #endregion
+
+    }
 }
