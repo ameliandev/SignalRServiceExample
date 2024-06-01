@@ -5,11 +5,10 @@ namespace SignalRService.Hubs
 {
     public class ChatService
     {
-        private ChatServiceValidation ChatServiceValidation { get; set; }
         private Dictionary<string, Entities.Client> ServiceClients { get; set; }
+        private ChatServiceValidation ChatServiceValidation { get; set; }
         private HubCallerContext Context { get; set; }
-
-        private IHubCallerClients Clients { get; set; }
+        private ChatHttpRequest HttpRequest { get; set; }
 
         public ChatService(Dictionary<string, Client> serviceClients, HubCallerContext context, IHubCallerClients clients)
         { 
@@ -19,9 +18,10 @@ namespace SignalRService.Hubs
 
             this.ServiceClients = serviceClients;
             this.Context = context;
-            this.Clients = clients;
 
-            ChatServiceValidation = new ChatServiceValidation(serviceClients,Context);
+            HttpRequest = new ChatHttpRequest(context);
+
+            ChatServiceValidation = new ChatServiceValidation(Context);
         }
 
         /// <summary>
@@ -33,21 +33,24 @@ namespace SignalRService.Hubs
         {
             try
             {
-                Client client = ChatServiceValidation.ValidateRequest() ?? throw new Exception("No Client found");
+                if (!ChatServiceValidation.IsValid()) {
+                    throw new Exception("Invalid service request");
+                }
+
+                Client? client = this.GetClient() ?? throw new Exception("Client request not exists");
                 User user = client.GetUser(Context.ConnectionId, true);
-                Group group = client.Groups.FirstOrDefault(x => x.Id.Equals(groupGuid));
+                Group? group = client.GetGroup(groupGuid);
 
                 if (group == null)
                 {
                     Group newGroup = new()
                     {
                         Id = groupGuid,
-                        Members = new List<User>()
+                        Members = new List<User>() { new() { 
+                            ConnectionId = Context.ConnectionId, 
+                            Id = user.Id 
+                        }}
                     };
-
-                    newGroup.Members.Add(
-                        new User() { ConnectionId = Context.ConnectionId, Id = user.Id }
-                    );
 
                     client.Groups.Add(newGroup);
                 }
@@ -95,6 +98,20 @@ namespace SignalRService.Hubs
                 throw;
             }
         }
-        
+
+        /// <summary>
+        /// Get the Client
+        /// </summary>
+        /// <returns>Return a Client object if it exists</returns>
+        public Client? GetClient()
+        {
+            string clientGuid = HttpRequest.GetClientGuid();
+
+            if (!this.ServiceClients.ContainsKey(clientGuid)) {
+                return null;
+            }
+
+            return this.ServiceClients[clientGuid];
+        }
     }
 }
