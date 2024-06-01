@@ -6,13 +6,16 @@ namespace Entities
         public List<Entities.User> Users { get; set; }
         public List<Entities.Group> Groups { get; set; }
 
+        /// <summary>
+        /// Indicate if Groups and Users it's empty
+        /// </summary>
+        /// <returns>Description of the return value.</returns>
         public bool IsEmpty()
         {
-            return (this.Groups.Count == 0 && this.Users.Count == 0);
+            return this.Groups.Count == 0 && this.Users.Count == 0;
         }
 
         #region USER_CRUD
-
         public void AddUser(Entities.User user)
         {
             try
@@ -123,28 +126,38 @@ namespace Entities
 
         #region GROUP_CRUD
 
+        /// <summary>
+        /// Remove a user from all groups.
+        /// </summary>
+        /// <param name="user">The user to be removed from all groups</param>
+        /// <returns>True if the user was removed</returns>
         public bool GroupRemoveUser(User user)
         {
             try
             {
-                Group g = GetUserGroup(user.ConnectionId);
+                Group? group = GetUserGroup(user.ConnectionId);
 
-                this.Groups.Where(w => w.Id.Equals(g.Id)).FirstOrDefault().Members = this.Groups
-                    .Where(w => w.Id.Equals(g.Id))
-                    .FirstOrDefault()
-                    .Members.Where(m => !m.ConnectionId.Equals(user.ConnectionId))
-                    .ToList();
+                if (object.Equals(group, null)) { return false; }
+                if (Groups.Count.Equals(0)) { return false; }
+
+                List<User> updatedGroups = group.Members.Where(m => !m.ConnectionId.Equals(user.ConnectionId)).ToList() ?? new List<User>();
+
+                Groups.Where(w => w.Id.Equals(group.Id)).FirstOrDefault().Members = updatedGroups;
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                Console.WriteLine("Error eliminando usuario del grupo: " + ex.Message);
-                throw;
+                return false;
             }
 
             return true;
         }
 
-        public Entities.Group GetUserGroup(string connectionId)
+        /// <summary>
+        /// Get any group where the client connectionId exists on it.
+        /// </summary>
+        /// <param name="connectionId">Client's connection id</param>
+        /// <returns> Iterable list of groups</returns>
+        public Group? GetUserGroup(string connectionId)
         {
             try
             {
@@ -158,7 +171,12 @@ namespace Entities
             }
         }
 
-        public List<Entities.Group> GetUserGroups(string connectionId)
+        /// <summary>
+        /// Get all groups where the client connectionId exists on it.
+        /// </summary>
+        /// <param name="connectionId">Client's connection id</param>
+        /// <returns> Iterable list of groups</returns>
+        public List<Group> GetUserGroups(string connectionId)
         {
             try
             {
@@ -172,6 +190,10 @@ namespace Entities
             }
         }
 
+        /// <summary>
+        /// Get all client groups.
+        /// </summary>
+        /// <returns>A Iterable list of groups</returns>
         public List<Group> GetGroups()
         {
             try
@@ -184,6 +206,28 @@ namespace Entities
             }
         }
 
+        /// <summary>
+        /// Get Client group from unique identifier
+        /// </summary>
+        /// <param name="groupGuid">Group unique identifier</param>
+        /// <returns>A Group object if it exists</returns>
+        public Group? GetGroup(string groupGuid)
+        {
+            if (string.IsNullOrEmpty(groupGuid)) { return null; }
+
+            try
+            {
+                return Groups.FirstOrDefault(x => x.Id.Equals(groupGuid));
+            }
+            catch (System.Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Remove all client Groups
+        /// </summary>
         public void RemoveGroups()
         {
             this.Groups = new List<Group>();
