@@ -2,7 +2,7 @@ namespace Entities
 {
     public class Group
     {
-        public string Id { get; set; }
-        public List<Entities.User> Members { get; set; }
+        public required string Id { get; set; }
+        public required List<Entities.User> Members { get; set; }
     }
 }

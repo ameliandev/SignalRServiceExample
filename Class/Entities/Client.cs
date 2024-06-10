@@ -1,10 +1,12 @@
+using Newtonsoft.Json;
+
 namespace Entities
 {
     public class Client
     {
-        public string Id { get; set; }
-        public List<Entities.User> Users { get; set; }
-        public List<Entities.Group> Groups { get; set; }
+        public required string Id { get; set; }
+        public required List<Entities.User> Users { get; set; }
+        public required List<Entities.Group> Groups { get; set; }
 
         /// <summary>
         /// Indicate if Groups and Users it's empty
@@ -28,7 +30,7 @@ namespace Entities
             }
         }
 
-        public Entities.User GetUser(string identifier, bool byConnectionId)
+        public Entities.User? GetUser(string identifier, bool byConnectionId)
         {
             if (this.Users.Count == 0)
             {
@@ -39,11 +41,11 @@ namespace Entities
 
             if (byConnectionId)
             {
-                return this.Users.Where(x => x.ConnectionId.Equals(identifier)).FirstOrDefault();
+                return Users.FirstOrDefault(x => x.ConnectionId.Equals(identifier));
             }
             else
             {
-                return this.Users.Where(x => x.Id.Equals(identifier)).FirstOrDefault();
+                return Users.Where(x => x.Id.Equals(identifier)).FirstOrDefault();
             }
         }
 
@@ -83,7 +85,12 @@ namespace Entities
             {
                 try
                 {
-                    User u = this.GetUser(connectionId, true);
+                    User? u = this.GetUser(connectionId, true);
+
+                    if (object.Equals(u, null))
+                    {
+                        throw new Exception($"User with connection id ${connectionId} not found.");
+                    }
 
                     if (
                         !includeMe
@@ -113,7 +120,12 @@ namespace Entities
 
         public bool DeleteUser(string userGuid)
         {
-            Entities.User user = this.GetUser(userGuid, false);
+            User? user = this.GetUser(userGuid, false);
+
+            if (object.Equals(user, null))
+            {
+                throw new Exception($"User with GUID ${userGuid} not found.");
+            }
 
             GroupRemoveUser(user);
 
@@ -140,9 +152,14 @@ namespace Entities
                 if (object.Equals(group, null)) { return false; }
                 if (Groups.Count.Equals(0)) { return false; }
 
-                List<User> updatedGroups = group.Members.Where(m => !m.ConnectionId.Equals(user.ConnectionId)).ToList() ?? new List<User>();
+                List<User> groupMembers = group.Members.Where(m => !m.ConnectionId.Equals(user.ConnectionId)).ToList() ?? new List<User>();
 
-                Groups.Where(w => w.Id.Equals(group.Id)).FirstOrDefault().Members = updatedGroups;
+                Group? groupFromUser = Groups.FirstOrDefault(w => w.Id.Equals(group.Id));
+
+                if (!object.Equals(groupFromUser, null))
+                {
+                    groupFromUser.Members = groupMembers;
+                }
             }
             catch (System.Exception)
             {
