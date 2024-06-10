@@ -1,10 +1,16 @@
 using SignalRService.Hubs;
+using SignalRService.Request;
+using SignalRService.Service;
+using SignalRService.Validation;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorPages();
 builder.Services.AddSignalR();
+builder.Services.AddSingleton<IChatServiceValidation, ChatServiceValidation>();
+builder.Services.AddSingleton<IChatService, ChatService>();
+builder.Services.AddSingleton<IChatHttpRequest, ChatHttpRequest>();
 
 var app = builder.Build();
 
@@ -18,14 +24,10 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseStaticFiles();
-
 app.UseRouting();
-
 app.UseAuthorization();
-
 app.MapRazorPages();
 app.UseMiddleware<FirstMiddleware>();
-
 app.MapHub<ChatHub>("/chatHub/{clientId}");
 
 // app.MapHub<ChatHub>("/chatHub");
